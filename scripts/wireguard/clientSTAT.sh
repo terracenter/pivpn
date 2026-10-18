@@ -48,10 +48,12 @@ listClients() {
         LAST_SEEN="$(awk '{ print $5 }' <<< "${LINE}")"
         CLIENT_NAME="$(grep "${PUBLIC_KEY}" "${CLIENTS_FILE}" \
           | awk '{ print $1 }')"
+        VIRTUAL_IP_CLEAN="${VIRTUAL_IP//\/32/}"
+        VIRTUAL_IP_CLEAN="${VIRTUAL_IP_CLEAN//\/128/}"
         printf "%s  \t  %s  \t  %s  \t  " \
           "${CLIENT_NAME}" \
           "${REMOTE_IP}" \
-          "${VIRTUAL_IP/\/32/}"
+          "${VIRTUAL_IP_CLEAN}"
 
         if [[ "${HR}" == 1 ]]; then
           printf "%s  \t  %s  \t  " \

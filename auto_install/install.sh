@@ -976,7 +976,7 @@ chooseInterface() {
       echo "IPv4dev=${IPv4dev}"
 
       if [[ "${pivpnenableipv6}" -eq 1 ]] \
-        && [[ -z "${IPv6dev}" ]]; then
+        && [[ -n "${IPv6dev}" ]]; then
         echo "IPv6dev=${IPv6dev}"
       fi
     } >> "${tempsetupVarsFile}"
@@ -1116,21 +1116,45 @@ validIPAndNetmask() {
 
 checkipv6uplink() {
   curl \
-    --max-time 3 \
-    --connect-timeout 3 \
+    --max-time 5 \
+    --connect-timeout 5 \
     --silent \
     -6 \
-    https://google.com \
+    https://api64.ipify.org \
     > /dev/null
   curlv6testres="$?"
 
   if [[ "${curlv6testres}" -ne 0 ]]; then
-    echo -n "::: IPv6 test connections to google.com have failed. "
-    echo -n "Disabling IPv6 support. "
-    echo "(The curl test failed with code: ${curlv6testres})"
-    pivpnenableipv6=0
+    curl \
+      --max-time 5 \
+      --connect-timeout 5 \
+      --silent \
+      -6 \
+      https://google.com \
+      > /dev/null
+    curlv6testres="$?"
+  fi
+
+  if [[ "${curlv6testres}" -ne 0 ]]; then
+    echo "::: IPv6 automatic test connections failed (error code: ${curlv6testres})."
+    if [[ "${runUnattended}" == 'true' ]]; then
+      echo "::: Disabling IPv6 support in unattended mode."
+      pivpnenableipv6=0
+    else
+      if whiptail \
+        --backtitle "PiVPN Setup" \
+        --title "IPv6 Support" \
+        --yesno "No se detectó salida automática IPv6 con la prueba de curl.\n\n¿Tu servidor dispone de IPv6 y deseas forzar su activación para WireGuard?" \
+        "${r}" "${c}"; then
+        echo "::: Forcing IPv6 support enabled by user selection."
+        pivpnenableipv6=1
+      else
+        echo "::: Disabling IPv6 support."
+        pivpnenableipv6=0
+      fi
+    fi
   else
-    echo -n "::: IPv6 test connections to google.com successful. "
+    echo -n "::: IPv6 test connections successful. "
     echo "Enabling IPv6 support."
     pivpnenableipv6=1
   fi
@@ -3429,16 +3453,22 @@ confNetwork() {
           ${SUDO} sed "${sed_pattern}" -i /etc/ufw/before6.rules
         fi
       else
-        sed_pattern="/delete these required/i"
-        sed_pattern="${sed_pattern} *nat\n:POSTROUTING ACCEPT [0:0]\n"
-        sed_pattern="${sed_pattern}-I POSTROUTING"
-        sed_pattern="${sed_pattern} -s ${pivpnNETv6}\/${subnetClassv6}"
-        sed_pattern="${sed_pattern} -o ${IPv6dev}"
-        sed_pattern="${sed_pattern} -j MASQUERADE"
-        sed_pattern="${sed_pattern} -m comment"
-        sed_pattern="${sed_pattern} --comment ${VPN}-nat-rule\n"
-        sed_pattern="${sed_pattern}COMMIT\n"
-        ${SUDO} sed "${sed_pattern}" -i /etc/ufw/before6.rules
+        if ${SUDO} grep -q "delete these required" /etc/ufw/before6.rules; then
+          sed_pattern="/delete these required/i"
+          sed_pattern="${sed_pattern} *nat\n:POSTROUTING ACCEPT [0:0]\n"
+          sed_pattern="${sed_pattern}-I POSTROUTING"
+          sed_pattern="${sed_pattern} -s ${pivpnNETv6}\/${subnetClassv6}"
+          sed_pattern="${sed_pattern} -o ${IPv6dev}"
+          sed_pattern="${sed_pattern} -j MASQUERADE"
+          sed_pattern="${sed_pattern} -m comment"
+          sed_pattern="${sed_pattern} --comment ${VPN}-nat-rule\n"
+          sed_pattern="${sed_pattern}COMMIT\n"
+          ${SUDO} sed "${sed_pattern}" -i /etc/ufw/before6.rules
+        else
+          local nat_block
+          nat_block="# NAT IPv6 para WireGuard\n*nat\n:POSTROUTING ACCEPT [0:0]\n-A POSTROUTING -s ${pivpnNETv6}/${subnetClassv6} -o ${IPv6dev} -j MASQUERADE -m comment --comment ${VPN}-nat-rule\nCOMMIT\n"
+          ${SUDO} sed -i "1i ${nat_block}" /etc/ufw/before6.rules
+        fi
       fi
     fi
 

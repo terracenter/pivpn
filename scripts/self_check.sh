@@ -51,6 +51,24 @@ else
   fi
 fi
 
+if [[ "${pivpnenableipv6-0}" -eq 1 ]]; then
+  if [[ -f /proc/sys/net/ipv6/conf/all/forwarding ]] && [[ "$(< /proc/sys/net/ipv6/conf/all/forwarding)" -eq 1 ]]; then
+    echo ":: [OK] IPv6 forwarding is enabled"
+  else
+    ERR=1
+    read -r \
+      -p ":: [ERR] IPv6 forwarding is not enabled, attempt fix now? [Y/n] " \
+      REPLY
+
+    if [[ "${REPLY}" =~ ^[Yy]$ ]] || [[ -z "${REPLY}" ]]; then
+      echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.d/99-pivpn.conf
+      echo "net.ipv6.conf.default.forwarding=1" >> /etc/sysctl.d/99-pivpn.conf
+      sysctl -p /etc/sysctl.d/99-pivpn.conf
+      echo "Done"
+    fi
+  fi
+fi
+
 if [[ "${USING_UFW}" -eq 0 ]]; then
   # Disabled SC Warnings for SC2154, values
   # for variables are sourced from setupVars
@@ -209,6 +227,24 @@ else
       ufw reload
       echo "Done"
       unset sed_pattern
+    fi
+  fi
+
+  if [[ "${pivpnenableipv6-0}" -eq 1 ]]; then
+    if grep -q "fd11:5ee:bad:c0de::/64.*MASQUERADE\|${pivpnNETv6-fd11:5ee:bad:c0de::}.*MASQUERADE" /etc/ufw/before6.rules 2>/dev/null \
+      || ip6tables -t nat -C POSTROUTING -s "${pivpnNETv6}/${subnetClassv6}" -o "${IPv6dev}" -j MASQUERADE &> /dev/null \
+      || (command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q "${pivpnNETv6}.*masquerade"); then
+      echo ":: [OK] Ufw IPv6 MASQUERADE rule set"
+    else
+      ERR=1
+      echo -n ":: [ERR] Ufw IPv6 MASQUERADE rule is not set, attempt fix now? [Y/n] "
+      read -r REPLY
+
+      if [[ "${REPLY}" =~ ^[Yy]$ ]] || [[ -z "${REPLY}" ]]; then
+        sed -i '1i # NAT IPv6 para WireGuard\n*nat\n:POSTROUTING ACCEPT [0:0]\n-A POSTROUTING -s '"${pivpnNETv6}"'/'"${subnetClassv6}"' -o '"${IPv6dev}"' -j MASQUERADE\nCOMMIT\n' /etc/ufw/before6.rules
+        ufw reload
+        echo "Done"
+      fi
     fi
   fi
 
